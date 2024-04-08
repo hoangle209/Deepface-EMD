@@ -15,7 +15,24 @@ def Sinkhorn(K, u, v):
     T = torch.matmul(r.unsqueeze(-1), c.unsqueeze(-2)) * K
     return T
 
+
 def emd_similarity(anchor, anchor_center, fb, fb_center, stage, method='apc'):
+    """
+    Parameters:
+    -----------
+        anchor, torch.Tensor, 
+            embedding feature from backbone
+        anchor_center, torch.Tensor,
+            feature after FC of embedding feature
+        fb, torch.Tensor,
+            feature_bank from "targets"
+        fb_center, torch.Tensor,
+            center_feature_bank from "targets
+        stage, int,
+            0 means first ranking stage, get top-K candicates having most similar to anchor_center
+            1 means re-ranking stage, sort top-K candicates based similarity
+        method, str
+    """
     flows = None
     u = v = None
     if stage == 0:  # stage 1: Cosine similarity

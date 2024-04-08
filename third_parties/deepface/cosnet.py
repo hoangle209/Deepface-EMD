@@ -20,9 +20,9 @@ class sphere(nn.Module):
     def __init__(self, type=20, is_gray=False):
         super(sphere, self).__init__()
         block = Block
-        if type is 20:
+        if type == 20:
             layers = [1, 2, 4, 1]
-        elif type is 64:
+        elif type == 64:
             layers = [3, 7, 16, 3]
         else:
             raise ValueError('sphere' + str(type) + " IS NOT SUPPORTED! (sphere20 or sphere64)")
