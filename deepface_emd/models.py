@@ -74,7 +74,10 @@ class DeepfaceEMD(torch.nn.Module):
 
         Parameters:
         -----------
-            batch: Union[list, ndarray, torch.Tensor]
+            batch: Union[list, ndarray, torch.Tensor],
+                list contains images in BGR format with shape HxWxC
+                ndarray with shape HxWxC or bxHxWxC 
+                torch.Tensor with shape bxCxHxW in range(0, 1)
         """
         if not isinstance(batch, torch.Tensor):
             if isinstance(batch, list):
@@ -85,7 +88,7 @@ class DeepfaceEMD(torch.nn.Module):
                     batch = batch[None]
 
             batch = batch.transpose(0, 3, 1, 2)
-            batch = batch / 255. # convert to range(0,1)
+            batch = batch / 255. # convert to range(0, 1)
             batch = torch.from_numpy(batch).float()
 
         fm = self.cfg.face_net.type
@@ -100,7 +103,7 @@ class DeepfaceEMD(torch.nn.Module):
         elif fm == "arcface_iresnet":
             batch = resize(batch, (112, 112))
             
-        batch = (batch - 0.5) / 0.5 # convert to range (-1, 1)
+        batch = (batch - 0.5) / 0.5 # convert to range(-1, 1)
         return batch 
     
 
@@ -134,9 +137,8 @@ class DeepfaceEMD(torch.nn.Module):
         query_feature_bank, query_feature_bank_center, query_avgpool_bank_center = self.extract_feat(queries)
         target_feature_bank, target_feature_bank_center, target_avgpool_bank_center = self.extract_feat(targets)
 
-
         for idx, query_feature_center in enumerate(query_feature_bank_center):
-            # the stage 0 is to compute the topK candicates who are most similar
+            # the first stage is to compute the topK candicates who are most similar
             first_stage_similarity, _, _, _ = emd_similarity(None, 
                                                              query_feature_center, 
                                                              None, 
@@ -145,13 +147,13 @@ class DeepfaceEMD(torch.nn.Module):
             first_stage_topK_inds = torch.argsort(first_stage_similarity, descending=True)[:first_topK]
             logger.info(f"First stage similarity {first_stage_similarity}")
 
+            # the second stage is to re-rank the candicates in the first stage
             anchor = query_feature_bank[idx]
             feature_query = query_avgpool_bank_center[idx]
-            feature_target = target_avgpool_bank_center[first_stage_topK_inds]
             sim_avg, _, _, _ = emd_similarity(anchor, 
                                               feature_query, 
                                               target_feature_bank[first_stage_topK_inds], 
-                                              feature_target, 
+                                              target_avgpool_bank_center[first_stage_topK_inds], 
                                               stage=1, 
                                               method="apc")
             
@@ -165,18 +167,24 @@ class DeepfaceEMD(torch.nn.Module):
 
     def alignment(self, src_img, src_pts):
         # For 96x112
-        ref_pts = [ 
-            [30.2946, 51.6963],
-            [65.5318, 51.5014], 
-            [48.0252, 71.7366],
-            [33.5493, 92.3655],
-            [62.7299, 92.2041]
-        ]
-        crop_size = (96, 112)
+        # ref_pts = [ 
+        #     [30.2946, 51.6963],
+        #     [65.5318, 51.5014], 
+        #     [48.0252, 71.7366],
+        #     [33.5493, 92.3655],
+        #     [62.7299, 92.2041]
+        # ]
+        # crop_size = (96, 112)
 
         # For 160x160
-        # ref_pts = [ [61.4356, 54.6963],[118.5318, 54.6963], [93.5252, 90.7366],[68.5493, 122.3655],[110.7299, 122.3641]]
-        # crop_size = (160, 160)
+        ref_pts = [
+            [52.6862,  73.8519 ],
+            [109.2197, 73.5734 ], 
+            [80.042,   102.4809],
+            [55.9155,  131.9507],
+            [104.5498, 131.7201]
+        ]
+        crop_size = (160, 160)
         src_pts = np.array(src_pts).reshape(5,2)
 
         s = np.array(src_pts).astype(np.float32)
@@ -191,41 +199,71 @@ class DeepfaceEMD(torch.nn.Module):
         """
         Parameters:
         -----------
-            input, Union[str, nd.array],
-                in RGB format
+            input, ndarray,
+                if ndarray, input is in RGB format
         """
-        if isinstance(input, str):
-            input = io.imread(input)
-
         le_eye_pos = [36, 37, 38, 39, 40, 41]
-        r_eye_pos = [42, 43, 44, 45, 47, 46]
+        r_eye_pos  = [42, 43, 44, 45, 47, 46]
 
         preds = self.fa.get_landmarks_from_image(input)
-        img = img_as_ubyte(input)[..., ::-1] # convert to BGR format
-
         lmks = preds[0]
         le_eye_x, le_eye_y = 0.0, 0.0
         r_eye_x, r_eye_y = 0.0, 0.0
         for l_p, r_p in zip(le_eye_pos, r_eye_pos):
             le_eye_x += lmks[l_p][0]
             le_eye_y += lmks[l_p][1]
-            r_eye_x += lmks[r_p][0]
-            r_eye_y += lmks[r_p][1]
+            r_eye_x  += lmks[r_p][0]
+            r_eye_y  += lmks[r_p][1]
+        
         le_eye_x = int(le_eye_x / len(le_eye_pos))
-        le_eye_y = int(le_eye_y/ len(le_eye_pos))
-        r_eye_x  = int(r_eye_x / len(r_eye_pos))
-        r_eye_y =  int(r_eye_y / len(r_eye_pos))
-        nose = (int(lmks[30][0]), int(lmks[30][1]))
-        left_mo = (int(lmks[60][0]), int(lmks[60][1]))
-        ri_mo = (int(lmks[64][0]), int(lmks[64][1]))
+        le_eye_y = int(le_eye_y / len(le_eye_pos))
+        r_eye_x  = int(r_eye_x  / len(r_eye_pos))
+        r_eye_y  = int(r_eye_y  / len(r_eye_pos))
+        nose     = (int(lmks[30][0]), int(lmks[30][1]))
+        left_mo  = (int(lmks[60][0]), int(lmks[60][1]))
+        ri_mo    = (int(lmks[64][0]), int(lmks[64][1]))
         final_lmks = [(le_eye_x, le_eye_y), (r_eye_x, r_eye_y), nose, left_mo, ri_mo]
+        
         landmark = []
         for lmk in final_lmks:
             landmark.append(lmk[0])
             landmark.append(lmk[1])
-        cropped_align = self.alignment(img,landmark)
+
+        img = img_as_ubyte(input)[..., ::-1] # convert to BGR format
+        cropped_align = self.alignment(img, landmark)
 
         return cropped_align
+
+
+    @staticmethod
+    def handle_input(input):
+        if isinstance(input, list):
+            input_ = []
+            for im in input:
+                if isinstance(im, str):
+                    im = io.imread(im)
+                    input_.append(im)
+                else:
+                    input_.append(im)
+            input = input_
+        
+        elif isinstance(input, str):
+            input = [io.imread(input)]
+        else:
+            input = [input]
+
+        return input
+
+
+    def run_finding_similarities(self, queries, targets):
+        queries = self.handle_input(queries)
+        targets = self.handle_input(targets)
+
+        if self.cfg.use_face_allignment:
+            queries = [self.alligning_faces(input) for input in queries]
+            targets = [self.alligning_faces(input) for input in targets]
+        
+        self.find_smilarities(queries, targets)
 
 
     def forward(self, queries, targets):

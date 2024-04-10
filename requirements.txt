@@ -1,4 +1,5 @@
 rich
-face_alignment
-matlab_cp2tform
+kornia
+face-alignment
 scikit-image
+omegaconf

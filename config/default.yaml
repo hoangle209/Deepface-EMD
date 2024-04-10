@@ -3,3 +3,6 @@ face_net:
   weight: "weights/arcface_iresnet50.pth"
 
 use_face_allignment: True
+frst_topK: 25
+second_topK: 5
+alpha: 0.7
