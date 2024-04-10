@@ -1,1 +1,4 @@
 rich
+face_alignment
+matlab_cp2tform
+scikit-image

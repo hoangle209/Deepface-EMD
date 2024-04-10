@@ -1,3 +1,5 @@
 face_net:
-  type: "arcface"
-  weight: ""
+  type: "arcface_iresnet"
+  weight: "weights/arcface_iresnet50.pth"
+
+use_face_allignment: True
