@@ -3,7 +3,7 @@ from torchvision import transforms as T
 
 from collections import OrderedDict
 import numpy as np
-from kornia.color import bgr_to_grayscale
+from kornia.color import bgr_to_grayscale, bgr_to_rgb
 from kornia.geometry.transform import resize
 from skimage import io, img_as_ubyte
 import cv2
@@ -16,6 +16,7 @@ from third_parties.deepface import (
                             )
 from deepface_emd.utils.matlab_cp2tform import get_similarity_transform_for_cv2
 from deepface_emd.utils.emd import emd_similarity
+from deepface_emd.utils.metrics import angular_distance
 from deepface_emd.utils import get_pylogger
 logger = get_pylogger()
 
@@ -59,8 +60,8 @@ class DeepfaceEMD(torch.nn.Module):
         elif self.cfg.face_net.type == "arcface_iresnet":
             self.facenet = iresnet50()
             self.facenet.load_state_dict(state_dict)
-            self.embed_key = 'embedding_44'
-            self.avg_pool_key = 'adpt_pooling_44'
+            self.embed_key = 'embedding_22'
+            self.avg_pool_key = 'adpt_pooling_22'
         
         else:
             logger.warning(f"model type {self.cfg.face_net.type} is not supported. Using arcface module as default !")
@@ -101,7 +102,11 @@ class DeepfaceEMD(torch.nn.Module):
         elif fm == "facenet":
             batch = resize(batch, (160, 160))
         elif fm == "arcface_iresnet":
+            """In https://github.com/deepinsight/insightface/blob/master/recognition/arcface_torch/inference.py
+            inference phase uses RGB format images 
+            """
             batch = resize(batch, (112, 112))
+            batch = bgr_to_rgb(batch)
             
         batch = (batch - 0.5) / 0.5 # convert to range(-1, 1)
         return batch 
@@ -109,7 +114,8 @@ class DeepfaceEMD(torch.nn.Module):
 
     def extract_feat(self, batch):
         batch = self.preprocess(batch)
-        out = self.facenet(batch)
+        with torch.no_grad():
+            out = self.facenet(batch)
 
         feature_bank = out[self.embed_key] 
         feature_bank_center = out[self.fea_key]
@@ -145,7 +151,7 @@ class DeepfaceEMD(torch.nn.Module):
                                                              target_feature_bank_center,
                                                              stage=0) 
             first_stage_topK_inds = torch.argsort(first_stage_similarity, descending=True)[:first_topK]
-            logger.info(f"First stage similarity {first_stage_similarity}")
+            logger.info(f"First stage similarity {angular_distance(first_stage_similarity)}")
 
             # the second stage is to re-rank the candicates in the first stage
             anchor = query_feature_bank[idx]
@@ -157,7 +163,7 @@ class DeepfaceEMD(torch.nn.Module):
                                               stage=1, 
                                               method="apc")
             
-            logger.info(f"Stage 2 sim {sim_avg}")
+            logger.info(f"Stage 2 sim {angular_distance(sim_avg)}")
             if alpha < 0:
                 rank_in_tops = torch.argsort(sim_avg + first_stage_similarity[first_stage_topK_inds], descending=True)[:second_topK]
             else:
@@ -165,27 +171,28 @@ class DeepfaceEMD(torch.nn.Module):
             # rank_targets = targets[rank_in_tops.int().tolist()] # TODO, handles target here 
 
 
-    def alignment(self, src_img, src_pts):
+    def alignment(self, src_img, src_pts, crop_size=(112, 112)):
         # For 96x112
-        # ref_pts = [ 
-        #     [30.2946, 51.6963],
-        #     [65.5318, 51.5014], 
-        #     [48.0252, 71.7366],
-        #     [33.5493, 92.3655],
-        #     [62.7299, 92.2041]
-        # ]
-        # crop_size = (96, 112)
-
-        # For 160x160
-        ref_pts = [
-            [52.6862,  73.8519 ],
-            [109.2197, 73.5734 ], 
-            [80.042,   102.4809],
-            [55.9155,  131.9507],
-            [104.5498, 131.7201]
+        ref_pts_96_112 = [ 
+            [30.2946, 51.6963],
+            [65.5318, 51.5014], 
+            [48.0252, 71.7366],
+            [33.5493, 92.3655],
+            [62.7299, 92.2041]
         ]
-        crop_size = (160, 160)
-        src_pts = np.array(src_pts).reshape(5,2)
+
+        ref_pts = []
+        for pts in ref_pts_96_112:
+            x, y = pts
+            ref_pts.append([
+                x / 96  * crop_size[0], 
+                y / 112 * crop_size[1]
+            ])
+
+        # ref_pts = [ [61.4356, 54.6963],[118.5318, 54.6963], [93.5252, 90.7366],[68.5493, 122.3655],[110.7299, 122.3641]]
+        # crop_size = (160, 160)
+
+        src_pts = np.array(src_pts).reshape(5, 2)
 
         s = np.array(src_pts).astype(np.float32)
         r = np.array(ref_pts).astype(np.float32)
@@ -195,7 +202,7 @@ class DeepfaceEMD(torch.nn.Module):
         return face_img
 
 
-    def alligning_faces(self, input):
+    def alligning_face(self, input):
         """
         Parameters:
         -----------
@@ -260,8 +267,8 @@ class DeepfaceEMD(torch.nn.Module):
         targets = self.handle_input(targets)
 
         if self.cfg.use_face_allignment:
-            queries = [self.alligning_faces(input) for input in queries]
-            targets = [self.alligning_faces(input) for input in targets]
+            queries = [self.alligning_face(input) for input in queries]
+            targets = [self.alligning_face(input) for input in targets]
         
         self.find_smilarities(queries, targets)
 

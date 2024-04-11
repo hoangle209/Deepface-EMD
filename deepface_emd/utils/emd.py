@@ -27,7 +27,7 @@ def emd_similarity(anchor, anchor_center, fb, fb_center, stage, method='apc'):
         fb, torch.Tensor,
             feature_bank from "targets"
         fb_center, torch.Tensor,
-            center_feature_bank from "targets
+            center_feature_bank from "targets"
         stage, int,
             0 means first ranking stage, get top-K candicates having most similar to anchor_center
             1 means re-ranking stage, sort top-K candicates based similarity

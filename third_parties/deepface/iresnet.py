@@ -160,17 +160,17 @@ class IResNet(nn.Module):
             embedding_16 = x
 
             x = self.layer4(x)
-            x = self.bn2(x)
-
             embedding_44 = torch.nn.functional.adaptive_avg_pool2d(x, output_size=(4, 4))
-            embedding_88 = torch.nn.functional.adaptive_avg_pool2d(x, output_size=(8, 8))
+            embedding_22 = torch.nn.functional.adaptive_avg_pool2d(x, output_size=(2, 2))
+            
+            x = self.bn2(x)
 
             x = torch.flatten(x, 1)
             x = self.dropout(x)
 
         adpt_pooling_16 = self.avgpool(embedding_16)
         adpt_pooling_44 = self.avgpool(embedding_44)
-        adpt_pooling_88 = self.avgpool(embedding_88)
+        adpt_pooling_22 = self.avgpool(embedding_22)
         
         x = self.fc(x.float() if self.fp16 else x)
         x = self.features(x)
@@ -178,10 +178,10 @@ class IResNet(nn.Module):
         out = {
             'fea':x,
             'embedding_16':embedding_16,
-            'embedding_88':embedding_88,
+            'embedding_22':embedding_22,
             'embedding_44':embedding_44,
             'adpt_pooling_44':adpt_pooling_44,
-            'adpt_pooling_88':adpt_pooling_88,
+            'adpt_pooling_22':adpt_pooling_22,
             'adpt_pooling_16':adpt_pooling_16
         }
         

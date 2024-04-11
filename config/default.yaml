@@ -1,6 +1,6 @@
 face_net:
   type: "arcface_iresnet"
-  weight: "weights/arcface_iresnet50.pth"
+  weight: "weights/cosface_glint360k_iresnet50.pth"
 
 use_face_allignment: True
 frst_topK: 25
