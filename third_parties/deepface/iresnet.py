@@ -160,17 +160,17 @@ class IResNet(nn.Module):
             embedding_16 = x
 
             x = self.layer4(x)
-            embedding_44 = torch.nn.functional.adaptive_avg_pool2d(x, output_size=(4, 4))
-            embedding_22 = torch.nn.functional.adaptive_avg_pool2d(x, output_size=(2, 2))
-            
             x = self.bn2(x)
-
             x = torch.flatten(x, 1)
             x = self.dropout(x)
+        
+        x_ = x.view(x.size(0), -1, 7, 7)
+        embedding_44 = torch.nn.functional.adaptive_avg_pool2d(x_, output_size=(4, 4))
+        embedding_88 = torch.nn.functional.adaptive_avg_pool2d(x_, output_size=(8, 8))
 
         adpt_pooling_16 = self.avgpool(embedding_16)
         adpt_pooling_44 = self.avgpool(embedding_44)
-        adpt_pooling_22 = self.avgpool(embedding_22)
+        adpt_pooling_88 = self.avgpool(embedding_88)
         
         x = self.fc(x.float() if self.fp16 else x)
         x = self.features(x)
@@ -178,10 +178,10 @@ class IResNet(nn.Module):
         out = {
             'fea':x,
             'embedding_16':embedding_16,
-            'embedding_22':embedding_22,
+            'embedding_88':embedding_88,
             'embedding_44':embedding_44,
             'adpt_pooling_44':adpt_pooling_44,
-            'adpt_pooling_22':adpt_pooling_22,
+            'adpt_pooling_88':adpt_pooling_88,
             'adpt_pooling_16':adpt_pooling_16
         }
         
@@ -195,26 +195,19 @@ def _iresnet(arch, block, layers, pretrained, progress, **kwargs):
     return model
 
 
-def iresnet18(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet18', IBasicBlock, [2, 2, 2, 2], pretrained,
-                    progress, **kwargs)
-
-
-def iresnet34(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet34', IBasicBlock, [3, 4, 6, 3], pretrained,
-                    progress, **kwargs)
-
-
-def iresnet50(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet50', IBasicBlock, [3, 4, 14, 3], pretrained,
-                    progress, **kwargs)
-
-
-def iresnet100(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet100', IBasicBlock, [3, 13, 30, 3], pretrained,
-                    progress, **kwargs)
-
-
-def iresnet200(pretrained=False, progress=True, **kwargs):
-    return _iresnet('iresnet200', IBasicBlock, [6, 26, 60, 6], pretrained,
-                    progress, **kwargs)
+def iresnet(num_layers, pretrained=False, progress=True, **kwargs):
+    if num_layers == 18:
+        return _iresnet('iresnet18', IBasicBlock, [2, 2, 2, 2], pretrained,
+                        progress, **kwargs)
+    elif num_layers == 34:
+        return _iresnet('iresnet34', IBasicBlock, [3, 4, 6, 3], pretrained,
+                        progress, **kwargs)
+    elif num_layers == 50:
+        return _iresnet('iresnet50', IBasicBlock, [3, 4, 14, 3], pretrained,
+                        progress, **kwargs)
+    elif num_layers == 100:
+        return _iresnet('iresnet100', IBasicBlock, [3, 13, 30, 3], pretrained,
+                        progress, **kwargs)
+    elif num_layers == 200:
+        return _iresnet('iresnet200', IBasicBlock, [6, 26, 60, 6], pretrained,
+                        progress, **kwargs)

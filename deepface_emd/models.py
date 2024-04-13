@@ -1,5 +1,5 @@
 import torch
-from torchvision import transforms as T
+import torchvision
 
 from collections import OrderedDict
 import numpy as np
@@ -7,30 +7,32 @@ from kornia.color import bgr_to_grayscale, bgr_to_rgb
 from kornia.geometry.transform import resize
 from skimage import io, img_as_ubyte
 import cv2
+import time
 
 from third_parties.deepface import (
                                 resnet_face18, 
                                 sphere, 
                                 InceptionResnetV1, 
-                                iresnet50
+                                iresnet
                             )
 from deepface_emd.utils.matlab_cp2tform import get_similarity_transform_for_cv2
 from deepface_emd.utils.emd import emd_similarity
 from deepface_emd.utils.metrics import angular_distance
-from deepface_emd.utils import get_pylogger
+from deepface_emd.utils import get_pylogger, get_patch_location
 logger = get_pylogger()
 
 class DeepfaceEMD(torch.nn.Module):
     def __init__(self, config) -> None:
         super().__init__()
         self.cfg = config
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.load_model()
 
         if self.cfg.use_face_allignment:
             import face_alignment
             self.fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, 
                                                    flip_input=False,
-                                                   device="cpu")
+                                                   device=self.device)
 
     def load_model(self):
         checkpoint = self.cfg.face_net.weight
@@ -44,28 +46,26 @@ class DeepfaceEMD(torch.nn.Module):
             self.facenet.load_state_dict(_state_dict)
             self.embed_key = 'embedding_44'
             self.avg_pool_key = 'adpt_pooling_44'
-        
         elif self.cfg.face_net.type == "cosface":
             self.facenet = sphere()
             self.facenet.load_state_dict(state_dict)
             self.embed_key = 'embedding'
             self.avg_pool_key = 'adpt_pooling'
-        
         elif self.cfg.face_net.type == "facenet":
             self.facenet = InceptionResnetV1()
             self.facenet.load_state_dict(state_dict)
             self.embed_key = 'embedding' 
-            self.avg_pool_key = 'adpt_pooling'
-        
+            self.avg_pool_key = 'adpt_pooling' 
         elif self.cfg.face_net.type == "arcface_iresnet":
-            self.facenet = iresnet50()
+            self.facenet = iresnet(50)
             self.facenet.load_state_dict(state_dict)
-            self.embed_key = 'embedding_22'
-            self.avg_pool_key = 'adpt_pooling_22'
-        
+            self.embed_key = 'embedding_88'
+            self.avg_pool_key = 'adpt_pooling_88' 
         else:
             logger.warning(f"model type {self.cfg.face_net.type} is not supported. Using arcface module as default !")
+        
         self.fea_key = 'fea'
+        self.facenet = self.facenet.to(torch.device(self.device))
         self.facenet.eval()
 
 
@@ -92,8 +92,8 @@ class DeepfaceEMD(torch.nn.Module):
             batch = batch / 255. # convert to range(0, 1)
             batch = torch.from_numpy(batch).float()
 
+        batch = batch.to(self.device)
         fm = self.cfg.face_net.type
-
         if fm == "arcface":
             batch = bgr_to_grayscale(batch)
             batch = resize(batch, (128, 128))
@@ -102,14 +102,13 @@ class DeepfaceEMD(torch.nn.Module):
         elif fm == "facenet":
             batch = resize(batch, (160, 160))
         elif fm == "arcface_iresnet":
-            """In https://github.com/deepinsight/insightface/blob/master/recognition/arcface_torch/inference.py
-            inference phase uses RGB format images 
-            """
+            # In https://github.com/deepinsight/insightface/blob/master/recognition/arcface_torch/inference.py
+            # inference phase uses RGB format images 
             batch = resize(batch, (112, 112))
             batch = bgr_to_rgb(batch)
             
         batch = (batch - 0.5) / 0.5 # convert to range(-1, 1)
-        return batch 
+        return batch
     
 
     def extract_feat(self, batch):
@@ -129,7 +128,13 @@ class DeepfaceEMD(torch.nn.Module):
         return feature_bank, feature_bank_center, avgpool_bank_center
 
 
-    def find_smilarities(self, queries, targets=None, first_topK=25, second_topK=5, alpha=0.3):
+    def find_smilarities(self, 
+                         queries, 
+                         targets=None, 
+                         first_topK=25, 
+                         second_topK=5, 
+                         alpha=0.3,
+                         method="uew"):
         """
         Parameters:
         -----------
@@ -156,14 +161,15 @@ class DeepfaceEMD(torch.nn.Module):
             # the second stage is to re-rank the candicates in the first stage
             anchor = query_feature_bank[idx]
             feature_query = query_avgpool_bank_center[idx]
-            sim_avg, _, _, _ = emd_similarity(anchor, 
+            sim_avg, flows, u, v = emd_similarity(anchor, 
                                               feature_query, 
                                               target_feature_bank[first_stage_topK_inds], 
                                               target_avgpool_bank_center[first_stage_topK_inds], 
                                               stage=1, 
-                                              method="apc")
+                                              method=method)
             
             logger.info(f"Stage 2 sim {angular_distance(sim_avg)}")
+            return flows, u, v
             if alpha < 0:
                 rank_in_tops = torch.argsort(sim_avg + first_stage_similarity[first_stage_topK_inds], descending=True)[:second_topK]
             else:
@@ -173,14 +179,14 @@ class DeepfaceEMD(torch.nn.Module):
 
     def alignment(self, src_img, src_pts, crop_size=(112, 112)):
         # For 96x112
-        ref_pts_96_112 = [ 
+        ref_pts = ref_pts_96_112 = [ 
             [30.2946, 51.6963],
             [65.5318, 51.5014], 
             [48.0252, 71.7366],
             [33.5493, 92.3655],
             [62.7299, 92.2041]
         ]
-
+        # crop_size = (96, 112)
         ref_pts = []
         for pts in ref_pts_96_112:
             x, y = pts
@@ -212,7 +218,10 @@ class DeepfaceEMD(torch.nn.Module):
         le_eye_pos = [36, 37, 38, 39, 40, 41]
         r_eye_pos  = [42, 43, 44, 45, 47, 46]
 
+        b = time.time()
         preds = self.fa.get_landmarks_from_image(input)
+        logger.info(f"get landmark time {time.time() - b}")
+
         lmks = preds[0]
         le_eye_x, le_eye_y = 0.0, 0.0
         r_eye_x, r_eye_y = 0.0, 0.0
@@ -238,39 +247,41 @@ class DeepfaceEMD(torch.nn.Module):
 
         img = img_as_ubyte(input)[..., ::-1] # convert to BGR format
         cropped_align = self.alignment(img, landmark)
-
         return cropped_align
 
 
-    @staticmethod
-    def handle_input(input):
-        if isinstance(input, list):
-            input_ = []
-            for im in input:
-                if isinstance(im, str):
-                    im = io.imread(im)
-                    input_.append(im)
-                else:
-                    input_.append(im)
-            input = input_
-        
-        elif isinstance(input, str):
-            input = [io.imread(input)]
-        else:
-            input = [input]
+    def visual_flow(self, img, flow, u, v, size=(112, 112), level=4):
+        img = img.transpose(2, 0, 1) / 255.0
+        img = torch.from_numpy(img).float().to(self.device)
 
-        return input
+        flow = flow[0]
+        patch_list = []
+        weight = flow.sum(-1)
+        nums = flow.shape[0]
+        weight = (weight - weight.min()) / (weight.max() - weight.min())
+        for index_grid in range(nums):
+            index_patch=torch.argmax(flow[index_grid]).item()
+            row_location, col_location, _ , _ = get_patch_location(index_patch, size[0], "arcface_iresnet", level=level)
+            patch = img[:, row_location[0]:row_location[1], col_location[0]:col_location[1]]
+            patch = patch * weight[index_grid]
+            patch_list.append(patch)
+
+        patch_list = torch.stack(patch_list, dim=0)
+        grids = torchvision.utils.make_grid(patch_list, nrow=level, padding=0)
+        grids = grids.permute(1,2,0).cpu().detach().numpy() * 255.0
+        return grids.astype("uint8")
 
 
     def run_finding_similarities(self, queries, targets):
-        queries = self.handle_input(queries)
-        targets = self.handle_input(targets)
-
         if self.cfg.use_face_allignment:
             queries = [self.alligning_face(input) for input in queries]
             targets = [self.alligning_face(input) for input in targets]
         
-        self.find_smilarities(queries, targets)
+        flow, u, v = self.find_smilarities(queries, targets)
+        grid = self.visual_flow(targets[0], flow, u, v, level=8)
+        image = np.hstack([queries[0], grid, targets[0]])
+        cv2.imshow("img", image)
+        cv2.waitKey(0)
 
 
     def forward(self, queries, targets):

@@ -1,8 +1,11 @@
 face_net:
-  type: "arcface_iresnet"
-  weight: "weights/cosface_glint360k_iresnet50.pth"
+  type: "arcface_iresnet_unpg"
+  weight: "weights/face.r100.arc.unpg.pt"
+  num_layers: 100
 
 use_face_allignment: True
 frst_topK: 25
 second_topK: 5
 alpha: 0.7
+method: "apc"
+level: 8

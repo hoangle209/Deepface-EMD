@@ -6,17 +6,15 @@ from omegaconf import OmegaConf
 import glob
 import cv2
 from skimage import io
+import torch
 
 PATH = "face"
 
 if __name__ == "__main__":
-    cfg = OmegaConf.load("config/default.yaml")
-    model = DeepfaceEMD(cfg)
-    images = sorted(glob.glob(f"{PATH}/*.jpg"))
-    im = io.imread(images[11])
+    from third_parties.deepface import iresnet
 
-    allign_im = model.alligning_faces(im)
-
-    cv2.imshow("img", allign_im)
+    model = iresnet(100)
+    weight = torch.load("weights/face.r100.arc.unpg.pt", map_location="cpu")
+    model.load_state_dict(weight)
 
 
