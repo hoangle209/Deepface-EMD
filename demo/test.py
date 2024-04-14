@@ -1,7 +1,7 @@
 import sys
 sys.path.insert(0, ".")
 
-from deepface_emd.models import DeepfaceEMD
+from deepface_emd.modelv2 import DeepfaceEMD
 from omegaconf import OmegaConf
 import glob
 import cv2
@@ -32,7 +32,7 @@ if __name__ == "__main__":
     im2 = io.imread(images[y])
     # im3 = io.imread(images[z])
 
-    model.run_finding_similarities([im1], [im2])
+    model.find_similarities([im1], [im2])
 
 
 
